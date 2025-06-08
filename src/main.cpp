@@ -2,6 +2,7 @@
 #include <BleGamepad.h>
 #include <PCF8575.h>
 #include "driver/gpio.h"
+#include <ESP32Encoder.h>
 
 struct EncoderPin
 {
@@ -31,12 +32,12 @@ constexpr size_t SWITCHES_LIST_LENGTH = sizeof(SWITCHES_LIST) / sizeof(SWITCHES_
 constexpr EncoderPin ENCODERS_LIST[] = {{GPIO_NUM_22, GPIO_NUM_21}};
 constexpr size_t ENCODERS_LIST_LENGTH = sizeof(ENCODERS_LIST) / sizeof(ENCODERS_LIST[0]);
 
-constexpr gpio_num_t POTENTIOMETER_PINS = {};
+constexpr gpio_num_t POTENTIOMETER_PIN = GPIO_NUM_36;
 
 constexpr uint16_t NUMBER_OF_GAMEPAD_BUTTONS = PCF_PINS_LENGTH + ENCODERS_LIST_LENGTH * 2 + SWITCHES_LIST_LENGTH;
 
 constexpr uint16_t DEBOUNCE_TIME_MS = 20;
-constexpr uint16_t ENCODER_DEBOUNCE_MS = 5;
+constexpr uint16_t ENCODER_DEBOUNCE_MS = 20;
 
 SemaphoreHandle_t pcf_semaphore = nullptr;
 SemaphoreHandle_t switch_semaphore = nullptr;
@@ -52,7 +53,9 @@ void setup_gamepad()
   bleGamepadConfig.setButtonCount(NUMBER_OF_GAMEPAD_BUTTONS);
   bleGamepadConfig.setControllerType(CONTROLLER_TYPE_GAMEPAD);
   bleGamepadConfig.setHatSwitchCount(0);
-  bleGamepadConfig.setWhichAxes(false, false, false, false, false, false, false, false);
+  bleGamepadConfig.setWhichAxes(true, false, false, false, false, false, false, false);
+  bleGamepadConfig.setAxesMin(0);
+  bleGamepadConfig.setAxesMax(255);
   bleGamepadConfig.setAutoReport(false);
 
   bleGamepad.begin(&bleGamepadConfig);
@@ -102,8 +105,8 @@ void setup_buttons()
 {
   Serial.println("Button setup");
 
-  Wire.begin(PCF_PINS.sda, PCF_PINS.scl);
-  pcf.begin();
+  assert(Wire.begin(PCF_PINS.sda, PCF_PINS.scl));
+  // assert(pcf.begin());
 
   pcf_semaphore = xSemaphoreCreateBinary();
   assert(pcf_semaphore);
@@ -169,7 +172,7 @@ void setup_switches()
   xTaskCreate(switch_task, "switch_task", 1024 * 8, nullptr, 1, nullptr);
 }
 
-void encoder_task(void *pv)
+void encoder_task_old(void *pv)
 {
   Serial.println("Encoder task start");
 
@@ -237,7 +240,47 @@ void encoder_task(void *pv)
   }
 }
 
+
+
+static IRAM_ATTR void enc_cb(void *arg)
+{
+  xSemaphoreGiveFromISR(encoder_semaphore, nullptr);
+}
+
+ESP32Encoder encoder(true, enc_cb);
+
+void encoder_task(void *pv)
+{
+
+  Serial.println("Encoder task start");
+
+  while (true)
+  {
+    if (xSemaphoreTake(encoder_semaphore, portMAX_DELAY) == pdTRUE)
+    {
+
+      Serial.print("Encoder count: ");
+      Serial.println(encoder.getCount());
+    }
+  }
+}
+
+
+
 void setup_encoders()
+{
+  encoder_semaphore = xSemaphoreCreateBinary();
+  assert(encoder_semaphore);
+
+  ESP32Encoder::useInternalWeakPullResistors = puType::up;
+  encoder.attachSingleEdge(ENCODERS_LIST[0].a, ENCODERS_LIST[0].b);
+  encoder.clearCount();
+  encoder.setFilter(1023);
+
+  xTaskCreate(encoder_task, "encoder_task", 1024 * 8, nullptr, 1, nullptr);
+}
+
+void setup_encoders_old()
 {
   encoder_semaphore = xSemaphoreCreateBinary();
   assert(encoder_semaphore);
@@ -255,11 +298,56 @@ void setup_encoders()
                     { xSemaphoreGiveFromISR(encoder_semaphore, nullptr); }, CHANGE);
   }
 
-  xTaskCreate(encoder_task, "encoder_task", 1024*8, nullptr, 1, nullptr);
+  xTaskCreate(encoder_task, "encoder_task", 1024 * 8, nullptr, 1, nullptr);
+}
+
+float alpha = 0.7; // 0.0–1.0, im mniejsze, tym silniejsze wygładzanie
+static float filtered_value = analogRead(POTENTIOMETER_PIN);
+
+void potentiometer_task(void *pv)
+{
+  Serial.println("Potentiometer task start");
+
+  TickType_t xLastWakeTime;
+  const TickType_t POTENTIOMETER_SAMPLING_FREQUENCY_MS = 20;
+
+  while (true)
+  {
+    xLastWakeTime = xTaskGetTickCount();
+    int raw = analogRead(POTENTIOMETER_PIN);
+
+    filtered_value = alpha * raw + (1 - alpha) * filtered_value;
+    int mapped = map((int)filtered_value, 0, 4095, 0, 255);
+    static int previous_value = 0;
+
+    const int HYSTERESIS = 3;
+    if (abs(mapped - previous_value) > HYSTERESIS)
+    {
+      if (mapped != previous_value)
+      {
+        Serial.print("Pot value:");
+        Serial.println(mapped);
+        previous_value = mapped;
+        bleGamepad.setAxes(mapped);
+        bleGamepad.sendReport();
+      }
+    }
+
+    vTaskDelayUntil(&xLastWakeTime, POTENTIOMETER_SAMPLING_FREQUENCY_MS / portTICK_PERIOD_MS);
+  }
+}
+
+void ARDUINO_ISR_ATTR potentiometer_callback()
+{
+}
+void setup_potentiometer()
+{
+  xTaskCreate(potentiometer_task, "potentiometer_task", 1024 * 8, nullptr, 1, nullptr);
 }
 
 void setup()
 {
+  setCpuFrequencyMhz(80);
   Serial.begin(115200);
   Serial.println("MSFS Controller app");
 
@@ -267,6 +355,7 @@ void setup()
   setup_buttons();
   setup_switches();
   setup_encoders();
+  setup_potentiometer();
 }
 
 void loop()
