@@ -9,8 +9,6 @@ namespace msfs
 {
     constexpr uint16_t ENCODER_FILTER = 1023;
 
-
-
     struct EncoderContext
     {
         ESP32Encoder encoder;
