@@ -6,14 +6,14 @@ namespace msfs
     constexpr uint16_t ENCODER_QUEUE_SIZE = 32;
     constexpr uint16_t TASK_STACK_DEPTH = 1024 * 8;
 
-    EncoderManager::EncoderManager(BleGamepad &ble_gamepad, const std::array<config::EncoderConfig, config::ENCODERS_LIST_LENGTH> &config) : m_ble_gamepad(ble_gamepad)
+    EncoderManager::EncoderManager(BleGamepad &ble_gamepad) : m_ble_gamepad(ble_gamepad)
     {
         m_queue = xQueueCreate(ENCODER_QUEUE_SIZE, sizeof(EncoderContext *));
         assert(m_queue);
 
         ESP32Encoder::useInternalWeakPullResistors = puType::up;
 
-        for (auto &entry : config)
+        for (auto &entry : config::ENCODERS_LIST)
         {
             m_contexts.emplace_back(new EncoderContext(entry, m_queue, isr));
         }
@@ -57,20 +57,20 @@ namespace msfs
 
                 if (diff > 0)
                 {
-                    Serial.printf("Encoder incremented (btn %zu)\n", ctx->config.gamepad_button_inc);
-                    m_ble_gamepad.press(ctx->config.gamepad_button_inc);
+                    Serial.printf("Encoder incremented (btn %zu)\n", ctx->inc_button);
+                    m_ble_gamepad.press(ctx->inc_button);
                     m_ble_gamepad.sendReport();
                     vTaskDelay(pdMS_TO_TICKS(20));
-                    m_ble_gamepad.release(ctx->config.gamepad_button_inc);
+                    m_ble_gamepad.release(ctx->inc_button);
                     m_ble_gamepad.sendReport();
                 }
                 else if (diff < 0)
                 {
-                    Serial.printf("Encoder decremented (btn %zu)\n", ctx->config.gamepad_button_dec);
-                    m_ble_gamepad.press(ctx->config.gamepad_button_dec);
+                    Serial.printf("Encoder decremented (btn %zu)\n", ctx->dec_button);
+                    m_ble_gamepad.press(ctx->dec_button);
                     m_ble_gamepad.sendReport();
                     vTaskDelay(pdMS_TO_TICKS(20));
-                    m_ble_gamepad.release(ctx->config.gamepad_button_dec);
+                    m_ble_gamepad.release(ctx->dec_button);
                     m_ble_gamepad.sendReport();
                 }
 

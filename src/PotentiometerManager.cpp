@@ -1,9 +1,10 @@
 #include "PotentiometerManager.hpp"
+#include "Configuration.hpp"
 
 namespace msfs
 {
-    PotentiometerManager::PotentiometerManager(BleGamepad &ble_gamepad, gpio_num_t pin, float alpha)
-        : m_ble_gamepad(ble_gamepad), m_pin(pin), m_alpha(alpha)
+    PotentiometerManager::PotentiometerManager(BleGamepad &ble_gamepad, float alpha)
+        : m_ble_gamepad(ble_gamepad), m_pin(config::POTENTIOMETER_PIN), m_alpha(alpha)
     {
         m_filtered_value = analogRead(m_pin);
 

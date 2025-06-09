@@ -19,7 +19,7 @@ namespace msfs
     class PotentiometerManager
     {
     public:
-        PotentiometerManager(BleGamepad &ble_gamepad, gpio_num_t pin, float alpha = pot::DEFAULT_ALPHA);
+        PotentiometerManager(BleGamepad &ble_gamepad, float alpha = pot::DEFAULT_ALPHA);
 
         PotentiometerManager(const PotentiometerManager &) = delete;
         PotentiometerManager &operator=(const PotentiometerManager &) = delete;

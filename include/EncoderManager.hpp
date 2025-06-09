@@ -13,15 +13,18 @@ namespace msfs
     {
         ESP32Encoder encoder;
         QueueHandle_t queue_handle;
-        config::EncoderConfig config;
         int last_count;
+        int dec_button;
+        int inc_button;
 
-        EncoderContext(config::EncoderConfig config, QueueHandle_t queue, enc_isr_cb_t cb)
-            : config(config),
-              encoder(true, cb, this),
+        EncoderContext(config::EncoderPinout pinout, QueueHandle_t queue, enc_isr_cb_t cb)
+            : encoder(true, cb, this),
               queue_handle(queue)
         {
-            encoder.attachSingleEdge(config.a, config.b);
+            static auto button_index = config::ENCODERS_BUTTONS_INDEX_START;
+            dec_button = button_index++;
+            inc_button = button_index++;
+            encoder.attachSingleEdge(pinout.a, pinout.b);
             encoder.clearCount();
             encoder.setFilter(ENCODER_FILTER);
         }
@@ -30,7 +33,7 @@ namespace msfs
     class EncoderManager
     {
     public:
-        EncoderManager(BleGamepad &ble_gamepad, const std::array<config::EncoderConfig, config::ENCODERS_LIST_LENGTH>& config);
+        EncoderManager(BleGamepad &ble_gamepad);
 
         EncoderManager(const EncoderManager &) = delete;
         EncoderManager &operator=(const EncoderManager &) = delete;

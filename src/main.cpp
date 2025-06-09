@@ -2,7 +2,6 @@
 #include <BleGamepad.h>
 #include <PCF8575.h>
 #include "driver/gpio.h"
-#include <ESP32Encoder.h>
 #include <vector>
 #include <memory>
 
@@ -12,37 +11,12 @@
 #include "SwitchManager.hpp"
 
 
-struct PcfPin
-{
-  gpio_num_t sda;
-  gpio_num_t scl;
-  gpio_num_t interrupt;
-};
-
-
-
-constexpr PcfPin PCF_PINS{GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_5};
-
-constexpr gpio_num_t SWITCHES_LIST[] = {GPIO_NUM_23, GPIO_NUM_17};
-
-
-
-
-constexpr uint16_t DEBOUNCE_TIME_MS = 20;
-
-
-SemaphoreHandle_t pcf_semaphore = nullptr;
-SemaphoreHandle_t switch_semaphore = nullptr;
-
 BleGamepad bleGamepad("MSFS Controller", "Pietraszak sp. z o.o.");
 BleGamepadConfiguration bleGamepadConfig;
-PCF8575 pcf;
 
 std::unique_ptr<msfs::EncoderManager> encoderManager;
 std::unique_ptr<msfs::PotentiometerManager> potManager;
 std::unique_ptr<msfs::SwitchManager> switchManager;
-
-
 
 void setup_gamepad()
 {
@@ -57,9 +31,16 @@ void setup_gamepad()
   bleGamepad.begin(&bleGamepadConfig);
 }
 
+
+
+SemaphoreHandle_t pcf_semaphore = nullptr;
+PCF8575 pcf;
+
 void pcf_task(void *pvParameter)
 {
   Serial.println("PCF Task start");
+
+  constexpr uint16_t DEBOUNCE_TIME_MS = 20;
 
   while (true)
   {
@@ -67,7 +48,7 @@ void pcf_task(void *pvParameter)
     {
       Serial.println("PCF Task woken");
 
-      gpio_intr_disable((gpio_num_t)PCF_PINS.interrupt);
+      gpio_intr_disable((gpio_num_t)config::PCF_PINOUT.interrupt);
 
       vTaskDelay(DEBOUNCE_TIME_MS / portTICK_PERIOD_MS);
 
@@ -88,11 +69,11 @@ void pcf_task(void *pvParameter)
       }
       bleGamepad.sendReport();
 
-      while (digitalRead(PCF_PINS.interrupt) == LOW)
+      while (digitalRead(config::PCF_PINOUT.interrupt) == LOW)
       {
         vTaskDelay(1);
       }
-      gpio_intr_enable((gpio_num_t)PCF_PINS.interrupt);
+      gpio_intr_enable((gpio_num_t)config::PCF_PINOUT.interrupt);
     }
   }
 }
@@ -101,20 +82,17 @@ void setup_buttons()
 {
   Serial.println("Button setup");
 
-  assert(Wire.begin(PCF_PINS.sda, PCF_PINS.scl));
+  assert(Wire.begin(config::PCF_PINOUT.sda, config::PCF_PINOUT.scl));
   // assert(pcf.begin());
 
   pcf_semaphore = xSemaphoreCreateBinary();
   assert(pcf_semaphore);
   xTaskCreate(pcf_task, "pcf_task", 1024 * 16, nullptr, 1, nullptr);
 
-  pinMode(PCF_PINS.interrupt, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(PCF_PINS.interrupt), []()
+  pinMode(config::PCF_PINOUT.interrupt, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(config::PCF_PINOUT.interrupt), []()
                   { xSemaphoreGiveFromISR(pcf_semaphore, nullptr); }, FALLING);
 }
-
-
-
 
 void setup()
 {
@@ -124,11 +102,10 @@ void setup()
 
   setup_gamepad();
 
-  encoderManager = std::unique_ptr<msfs::EncoderManager>(new msfs::EncoderManager(bleGamepad, config::ENCODERS_CONFIG));
-  potManager = std::unique_ptr<msfs::PotentiometerManager>(new msfs::PotentiometerManager(bleGamepad, config::POTENTIOMETER_PIN));
+  encoderManager = std::unique_ptr<msfs::EncoderManager>(new msfs::EncoderManager(bleGamepad));
+  potManager = std::unique_ptr<msfs::PotentiometerManager>(new msfs::PotentiometerManager(bleGamepad));
   switchManager = std::unique_ptr<msfs::SwitchManager>(new msfs::SwitchManager(bleGamepad));
   setup_buttons();
-
 }
 
 void loop()
