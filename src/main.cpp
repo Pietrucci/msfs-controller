@@ -3,18 +3,11 @@
 #include <PCF8575.h>
 #include "driver/gpio.h"
 #include <ESP32Encoder.h>
+#include <vector>
+#include <memory>
+#include "EncoderManager.hpp"
+#include "Configuration.hpp"
 
-struct EncoderPin
-{
-  gpio_num_t a;
-  gpio_num_t b;
-};
-
-struct EncoderState
-{
-  volatile uint8_t last_state;
-  volatile uint32_t last_isr_time;
-};
 
 struct PcfPin
 {
@@ -23,34 +16,38 @@ struct PcfPin
   gpio_num_t interrupt;
 };
 
+
+
 constexpr PcfPin PCF_PINS{GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_5};
-constexpr size_t PCF_PINS_LENGTH = 16;
 
 constexpr gpio_num_t SWITCHES_LIST[] = {GPIO_NUM_23, GPIO_NUM_17};
-constexpr size_t SWITCHES_LIST_LENGTH = sizeof(SWITCHES_LIST) / sizeof(SWITCHES_LIST[0]);
 
-constexpr EncoderPin ENCODERS_LIST[] = {{GPIO_NUM_22, GPIO_NUM_21}};
-constexpr size_t ENCODERS_LIST_LENGTH = sizeof(ENCODERS_LIST) / sizeof(ENCODERS_LIST[0]);
+
+
+
+constexpr config::EncoderConfig ENCODERS_LIST[] = {{GPIO_NUM_22, GPIO_NUM_21}, {GPIO_NUM_27, GPIO_NUM_26}};
+
+
 
 constexpr gpio_num_t POTENTIOMETER_PIN = GPIO_NUM_36;
-
-constexpr uint16_t NUMBER_OF_GAMEPAD_BUTTONS = PCF_PINS_LENGTH + ENCODERS_LIST_LENGTH * 2 + SWITCHES_LIST_LENGTH;
 
 constexpr uint16_t DEBOUNCE_TIME_MS = 20;
 constexpr uint16_t ENCODER_DEBOUNCE_MS = 20;
 
+
 SemaphoreHandle_t pcf_semaphore = nullptr;
 SemaphoreHandle_t switch_semaphore = nullptr;
-SemaphoreHandle_t encoder_semaphore = nullptr;
 
 BleGamepad bleGamepad("MSFS Controller", "Pietraszak sp. z o.o.");
 BleGamepadConfiguration bleGamepadConfig;
 PCF8575 pcf;
-EncoderState ENCODERS_STATE[ENCODERS_LIST_LENGTH] = {};
+
+std::unique_ptr<msfs::EncoderManager> encoderManager;
+
 
 void setup_gamepad()
 {
-  bleGamepadConfig.setButtonCount(NUMBER_OF_GAMEPAD_BUTTONS);
+  bleGamepadConfig.setButtonCount(config::NUMBER_OF_GAMEPAD_BUTTONS);
   bleGamepadConfig.setControllerType(CONTROLLER_TYPE_GAMEPAD);
   bleGamepadConfig.setHatSwitchCount(0);
   bleGamepadConfig.setWhichAxes(true, false, false, false, false, false, false, false);
@@ -121,9 +118,9 @@ void switch_task(void *pvParameter)
 {
   Serial.println("Switch task start");
 
-  uint8_t last_state[SWITCHES_LIST_LENGTH];
+  int last_state[config::SWITCHES_LIST_LENGTH];
 
-  for (int i = 0; i < SWITCHES_LIST_LENGTH; ++i)
+  for (int i = 0; i < config::SWITCHES_LIST_LENGTH; ++i)
   {
     last_state[i] = digitalRead(SWITCHES_LIST[i]);
   }
@@ -134,7 +131,7 @@ void switch_task(void *pvParameter)
     {
       vTaskDelay(DEBOUNCE_TIME_MS / portTICK_PERIOD_MS);
 
-      for (int i = 0; i < SWITCHES_LIST_LENGTH; ++i)
+      for (int i = 0; i < config::SWITCHES_LIST_LENGTH; ++i)
       {
         uint8_t pin = SWITCHES_LIST[i];
         uint8_t current = digitalRead(pin);
@@ -145,11 +142,11 @@ void switch_task(void *pvParameter)
           Serial.printf("Switch on pin %d changed to: %s\n", pin, current == LOW ? "ON" : "OFF");
           if (current == HIGH)
           {
-            bleGamepad.release(i + PCF_PINS_LENGTH + 1);
+            bleGamepad.release(i + config::SWITCHES_BUTTONS_INDEX_START);
           }
           else
           {
-            bleGamepad.press(i + PCF_PINS_LENGTH + 1);
+            bleGamepad.press(i + config::SWITCHES_BUTTONS_INDEX_START);
           }
           bleGamepad.sendReport();
         }
@@ -170,136 +167,12 @@ void setup_switches()
                     { xSemaphoreGiveFromISR(switch_semaphore, nullptr); }, CHANGE);
   }
   xTaskCreate(switch_task, "switch_task", 1024 * 8, nullptr, 1, nullptr);
-}
 
-void encoder_task_old(void *pv)
-{
-  Serial.println("Encoder task start");
-
-  while (true)
-  {
-    if (xSemaphoreTake(encoder_semaphore, portMAX_DELAY) == pdTRUE)
-    {
-      uint32_t now = millis();
-
-      for (size_t i = 0; i < ENCODERS_LIST_LENGTH; i++)
-      {
-        auto &pins = ENCODERS_LIST[i];
-        auto &state = ENCODERS_STATE[i];
-
-        if (now - state.last_isr_time < ENCODER_DEBOUNCE_MS)
-        {
-          continue;
-        }
-
-        state.last_isr_time = now;
-
-        bool a = digitalRead(pins.a);
-        bool b = digitalRead(pins.b);
-        uint8_t curr_state = (a << 1) | b;
-
-        if ((state.last_state == 0b00 && curr_state == 0b01) ||
-            (state.last_state == 0b01 && curr_state == 0b11) ||
-            (state.last_state == 0b11 && curr_state == 0b10) ||
-            (state.last_state == 0b10 && curr_state == 0b00))
-        {
-          static bool state = false;
-
-          Serial.println("Encoder decremented");
-          if (state)
-          {
-            bleGamepad.press(20);
-            bleGamepad.sendReport();
-          }
-          else
-          {
-            bleGamepad.release(20);
-            bleGamepad.sendReport();
-          }
-          state = !state;
-          // bleGamepad.press(20);
-          // bleGamepad.sendReport();
-          // bleGamepad.release(20);
-          // bleGamepad.sendReport();
-        }
-        else if ((state.last_state == 0b00 && curr_state == 0b10) ||
-                 (state.last_state == 0b10 && curr_state == 0b11) ||
-                 (state.last_state == 0b11 && curr_state == 0b01) ||
-                 (state.last_state == 0b01 && curr_state == 0b00))
-        {
-          Serial.println("Encoder incremented");
-          bleGamepad.press(19);
-          bleGamepad.sendReport();
-          bleGamepad.release(19);
-          bleGamepad.sendReport();
-        }
-
-        state.last_state = curr_state;
-      }
-    }
-  }
+  xSemaphoreGive(switch_semaphore);
 }
 
 
 
-static IRAM_ATTR void enc_cb(void *arg)
-{
-  xSemaphoreGiveFromISR(encoder_semaphore, nullptr);
-}
-
-ESP32Encoder encoder(true, enc_cb);
-
-void encoder_task(void *pv)
-{
-
-  Serial.println("Encoder task start");
-
-  while (true)
-  {
-    if (xSemaphoreTake(encoder_semaphore, portMAX_DELAY) == pdTRUE)
-    {
-
-      Serial.print("Encoder count: ");
-      Serial.println(encoder.getCount());
-    }
-  }
-}
-
-
-
-void setup_encoders()
-{
-  encoder_semaphore = xSemaphoreCreateBinary();
-  assert(encoder_semaphore);
-
-  ESP32Encoder::useInternalWeakPullResistors = puType::up;
-  encoder.attachSingleEdge(ENCODERS_LIST[0].a, ENCODERS_LIST[0].b);
-  encoder.clearCount();
-  encoder.setFilter(1023);
-
-  xTaskCreate(encoder_task, "encoder_task", 1024 * 8, nullptr, 1, nullptr);
-}
-
-void setup_encoders_old()
-{
-  encoder_semaphore = xSemaphoreCreateBinary();
-  assert(encoder_semaphore);
-
-  for (size_t i = 0; i < ENCODERS_LIST_LENGTH; i++)
-  {
-    pinMode(ENCODERS_LIST[i].a, INPUT_PULLUP);
-    pinMode(ENCODERS_LIST[i].b, INPUT_PULLUP);
-
-    ENCODERS_STATE[i].last_state = (digitalRead(ENCODERS_LIST[i].a) << 1) | digitalRead(ENCODERS_LIST[i].b);
-
-    attachInterrupt(digitalPinToInterrupt(ENCODERS_LIST[i].a), []()
-                    { xSemaphoreGiveFromISR(encoder_semaphore, nullptr); }, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(ENCODERS_LIST[i].b), []()
-                    { xSemaphoreGiveFromISR(encoder_semaphore, nullptr); }, CHANGE);
-  }
-
-  xTaskCreate(encoder_task, "encoder_task", 1024 * 8, nullptr, 1, nullptr);
-}
 
 float alpha = 0.7; // 0.0–1.0, im mniejsze, tym silniejsze wygładzanie
 static float filtered_value = analogRead(POTENTIOMETER_PIN);
@@ -345,6 +218,9 @@ void setup_potentiometer()
   xTaskCreate(potentiometer_task, "potentiometer_task", 1024 * 8, nullptr, 1, nullptr);
 }
 
+
+
+
 void setup()
 {
   setCpuFrequencyMhz(80);
@@ -352,9 +228,10 @@ void setup()
   Serial.println("MSFS Controller app");
 
   setup_gamepad();
+  encoderManager = std::unique_ptr<msfs::EncoderManager>(new msfs::EncoderManager(bleGamepad, config::ENCODERS_CONFIG));
   setup_buttons();
   setup_switches();
-  setup_encoders();
+
   setup_potentiometer();
 }
 
