@@ -44,9 +44,8 @@ namespace msfs
         for (auto &ctx : m_contexts)
             ctx->last_count = ctx->encoder.getCount();
 
-        uint16_t pulseSpacingMs = 25;
-        uint16_t pulseWidthMs = 25;
-
+        constexpr uint16_t pulseSpacingMs = 25;
+        constexpr uint16_t pulseWidthMs = 25;
         constexpr uint8_t MAX_IMPULSES_PER_EVENT = 5;
         constexpr uint16_t MIN_PULSE_MS = 1;
 
@@ -59,58 +58,6 @@ namespace msfs
                 int current = ctx->encoder.getCount();
                 int diff = current - ctx->last_count;
                 int steps = abs(diff);
-
-                // =============================
-                // 🧪 TEST FEATURE: Regulacja czasów
-                // =============================
-                // UWAGA: Sprawdzamy fizycznie naciśnięty przycisk, nie tylko "stronę" enkodera
-                uint8_t test_button = (diff > 0) ? ctx->inc_button : ctx->dec_button;
-
-                if (test_button == 24)
-                {
-                    pulseSpacingMs++;
-                    Serial.printf("[TEST] pulseSpacingMs zwiększono: %ums\n", pulseSpacingMs);
-                    ctx->last_count = current;
-                    continue;
-                }
-                if (test_button == 25)
-                {
-                    if (pulseSpacingMs > MIN_PULSE_MS)
-                    {
-                        pulseSpacingMs--;
-                        Serial.printf("[TEST] pulseSpacingMs zmniejszono: %ums\n", pulseSpacingMs);
-                    }
-                    else
-                    {
-                        Serial.println("[TEST] pulseSpacingMs już minimalne!");
-                    }
-                    ctx->last_count = current;
-                    continue;
-                }
-                if (test_button == 28)
-                {
-                    pulseWidthMs++;
-                    Serial.printf("[TEST] pulseWidthMs zwiększono: %ums\n", pulseWidthMs);
-                    ctx->last_count = current;
-                    continue;
-                }
-                if (test_button == 29)
-                {
-                    if (pulseWidthMs > MIN_PULSE_MS)
-                    {
-                        pulseWidthMs--;
-                        Serial.printf("[TEST] pulseWidthMs zmniejszono: %ums\n", pulseWidthMs);
-                    }
-                    else
-                    {
-                        Serial.println("[TEST] pulseWidthMs już minimalne!");
-                    }
-                    ctx->last_count = current;
-                    continue;
-                }
-                // =============================
-                // 🧪 KONIEC TESTU
-                // =============================
 
                 if (steps > 0)
                 {
