@@ -42,9 +42,13 @@ namespace msfs
         Serial.println("Encoder task start");
 
         for (auto &ctx : m_contexts)
-        {
             ctx->last_count = ctx->encoder.getCount();
-        }
+
+        uint16_t pulseSpacingMs = 25;
+        uint16_t pulseWidthMs = 25;
+
+        constexpr uint8_t MAX_IMPULSES_PER_EVENT = 5;
+        constexpr uint16_t MIN_PULSE_MS = 1;
 
         while (true)
         {
@@ -52,31 +56,86 @@ namespace msfs
 
             if (xQueueReceive(m_queue, &ctx, portMAX_DELAY) == pdTRUE)
             {
-                int currentCount = ctx->encoder.getCount();
-                int diff = currentCount - ctx->last_count;
+                int current = ctx->encoder.getCount();
+                int diff = current - ctx->last_count;
+                int steps = abs(diff);
 
-                if (diff > 0)
+                // =============================
+                // 🧪 TEST FEATURE: Regulacja czasów
+                // =============================
+                // UWAGA: Sprawdzamy fizycznie naciśnięty przycisk, nie tylko "stronę" enkodera
+                uint8_t test_button = (diff > 0) ? ctx->inc_button : ctx->dec_button;
+
+                if (test_button == 24)
                 {
-                    Serial.printf("Encoder incremented (btn %zu)\n", ctx->inc_button);
-                    m_ble_gamepad.press(ctx->inc_button);
-                    m_ble_gamepad.sendReport();
-                    vTaskDelay(pdMS_TO_TICKS(20));
-                    m_ble_gamepad.release(ctx->inc_button);
-                    m_ble_gamepad.sendReport();
+                    pulseSpacingMs++;
+                    Serial.printf("[TEST] pulseSpacingMs zwiększono: %ums\n", pulseSpacingMs);
+                    ctx->last_count = current;
+                    continue;
                 }
-                else if (diff < 0)
+                if (test_button == 25)
                 {
-                    Serial.printf("Encoder decremented (btn %zu)\n", ctx->dec_button);
-                    m_ble_gamepad.press(ctx->dec_button);
-                    m_ble_gamepad.sendReport();
-                    vTaskDelay(pdMS_TO_TICKS(20));
-                    m_ble_gamepad.release(ctx->dec_button);
-                    m_ble_gamepad.sendReport();
+                    if (pulseSpacingMs > MIN_PULSE_MS)
+                    {
+                        pulseSpacingMs--;
+                        Serial.printf("[TEST] pulseSpacingMs zmniejszono: %ums\n", pulseSpacingMs);
+                    }
+                    else
+                    {
+                        Serial.println("[TEST] pulseSpacingMs już minimalne!");
+                    }
+                    ctx->last_count = current;
+                    continue;
+                }
+                if (test_button == 28)
+                {
+                    pulseWidthMs++;
+                    Serial.printf("[TEST] pulseWidthMs zwiększono: %ums\n", pulseWidthMs);
+                    ctx->last_count = current;
+                    continue;
+                }
+                if (test_button == 29)
+                {
+                    if (pulseWidthMs > MIN_PULSE_MS)
+                    {
+                        pulseWidthMs--;
+                        Serial.printf("[TEST] pulseWidthMs zmniejszono: %ums\n", pulseWidthMs);
+                    }
+                    else
+                    {
+                        Serial.println("[TEST] pulseWidthMs już minimalne!");
+                    }
+                    ctx->last_count = current;
+                    continue;
+                }
+                // =============================
+                // 🧪 KONIEC TESTU
+                // =============================
+
+                if (steps > 0)
+                {
+                    if (steps > MAX_IMPULSES_PER_EVENT)
+                        steps = MAX_IMPULSES_PER_EVENT;
+
+                    uint8_t btn = (diff > 0) ? ctx->inc_button : ctx->dec_button;
+
+                    Serial.printf("Encoder %s (btn %u), diff = %d → %d impulsów\n",
+                                  diff > 0 ? "increment" : "decrement",
+                                  btn, diff, steps);
+
+                    for (int i = 0; i < steps; ++i)
+                    {
+                        m_ble_gamepad.press(btn);
+                        m_ble_gamepad.sendReport();
+                        vTaskDelay(pdMS_TO_TICKS(pulseWidthMs));
+
+                        m_ble_gamepad.release(btn);
+                        m_ble_gamepad.sendReport();
+                        vTaskDelay(pdMS_TO_TICKS(pulseSpacingMs));
+                    }
                 }
 
-                ctx->last_count = currentCount;
-
-                vTaskDelay(pdMS_TO_TICKS(20));
+                ctx->last_count = current;
             }
         }
     }

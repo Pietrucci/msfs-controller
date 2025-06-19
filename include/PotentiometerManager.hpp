@@ -8,12 +8,14 @@ namespace msfs
     {
         constexpr int TASK_STACK_SIZE = 1024 * 8;
         constexpr TickType_t SAMPLING_PERIOD_MS = 20;
-        constexpr float DEFAULT_ALPHA = 0.7f;
-        constexpr int HYSTERESIS = 3;
-        constexpr int ADC_MIN = 0;
-        constexpr int ADC_MAX = 4095;
+        constexpr float DEFAULT_ALPHA = 1.0f;
+        constexpr int HYSTERESIS = 0;
+        constexpr int ADC_MIN = 152; // To be calibrated based on voltage divider
+        constexpr int ADC_MAX = 3761; // To be calibrated based on voltage divider
         constexpr int OUTPUT_MIN = 0;
         constexpr int OUTPUT_MAX = 255;
+        constexpr uint8_t MS_SAMPLES = 32; // 16 próbek ≈ +2 bity / 4× mniejszy szum
+
     }
 
     class PotentiometerManager

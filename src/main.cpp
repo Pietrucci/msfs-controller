@@ -10,7 +10,6 @@
 #include "PotentiometerManager.hpp"
 #include "SwitchManager.hpp"
 
-
 BleGamepad bleGamepad("MSFS Controller", "Pietraszak sp. z o.o.");
 BleGamepadConfiguration bleGamepadConfig;
 
@@ -31,8 +30,6 @@ void setup_gamepad()
   bleGamepad.begin(&bleGamepadConfig);
 }
 
-
-
 SemaphoreHandle_t pcf_semaphore = nullptr;
 PCF8575 pcf;
 
@@ -41,49 +38,59 @@ void pcf_task(void *pvParameter)
   Serial.println("PCF Task start");
 
   constexpr uint16_t DEBOUNCE_TIME_MS = 20;
+  uint16_t last_readout = 0xFFFF; // wszystkie przyciski „nie wciśnięte” na starcie
 
   while (true)
   {
     if (xSemaphoreTake(pcf_semaphore, portMAX_DELAY) == pdTRUE)
     {
-      Serial.println("PCF Task woken");
 
       gpio_intr_disable((gpio_num_t)config::PCF_PINOUT.interrupt);
 
-      vTaskDelay(DEBOUNCE_TIME_MS / portTICK_PERIOD_MS);
-
-      // auto readout = pcf.read16();
-      uint16_t readout = esp_random();
-
-      for (int i = 15; i >= 0; i--)
+      do
       {
-        bool bit = (readout >> i) & 0x01;
-        if (bit)
+        vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_TIME_MS));
+
+        uint16_t readout = pcf.read16();
+
+        for (int i = 15; i >= 0; i--)
         {
-          bleGamepad.press(i + 1);
+          bool prev_bit = (last_readout >> i) & 0x01;
+          bool curr_bit = (readout >> i) & 0x01;
+
+          if (prev_bit != curr_bit)
+          {
+            if (curr_bit)
+            {
+              Serial.printf("Button depressed: (btn %d)\n", i);
+              bleGamepad.release(i + 1);
+            }
+            else
+            {
+              Serial.printf("Button pressed: (btn %d)\n", i);
+              bleGamepad.press(i + 1);
+            }
+          }
         }
-        else
-        {
-          bleGamepad.release(i + 1);
-        }
-      }
+
+        last_readout = readout;
+
+      } while (digitalRead(config::PCF_PINOUT.interrupt) == LOW);
+
       bleGamepad.sendReport();
 
-      while (digitalRead(config::PCF_PINOUT.interrupt) == LOW)
-      {
-        vTaskDelay(1);
-      }
       gpio_intr_enable((gpio_num_t)config::PCF_PINOUT.interrupt);
     }
   }
 }
+
 
 void setup_buttons()
 {
   Serial.println("Button setup");
 
   assert(Wire.begin(config::PCF_PINOUT.sda, config::PCF_PINOUT.scl));
-  // assert(pcf.begin());
+  assert(pcf.begin());
 
   pcf_semaphore = xSemaphoreCreateBinary();
   assert(pcf_semaphore);

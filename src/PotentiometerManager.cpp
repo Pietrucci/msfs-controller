@@ -3,6 +3,7 @@
 
 namespace msfs
 {
+
     PotentiometerManager::PotentiometerManager(BleGamepad &ble_gamepad, float alpha)
         : m_ble_gamepad(ble_gamepad), m_pin(config::POTENTIOMETER_PIN), m_alpha(alpha)
     {
@@ -25,20 +26,27 @@ namespace msfs
 
         while (true)
         {
-            int raw = analogRead(m_pin);
+            /* ---------- multisampling ---------- */
+            uint32_t acc = 0;
+            for (uint8_t i = 0; i < pot::MS_SAMPLES; ++i)
+                acc += analogRead(m_pin);
+
+            int raw = acc / pot::MS_SAMPLES; // średnia arytmetyczna
+            /* ----------------------------------- */
+
             m_filtered_value = m_alpha * raw + (1 - m_alpha) * m_filtered_value;
-            int mapped = map((int)m_filtered_value, pot::ADC_MIN, pot::ADC_MAX, pot::OUTPUT_MIN, pot::OUTPUT_MAX);
+            int mapped = map((int)m_filtered_value,
+                             pot::ADC_MIN, pot::ADC_MAX,
+                             pot::OUTPUT_MIN, pot::OUTPUT_MAX);
 
             if (abs(mapped - previous_value) > pot::HYSTERESIS)
             {
-                if (mapped != previous_value)
-                {
-                    Serial.print("Pot value: ");
-                    Serial.println(mapped);
-                    previous_value = mapped;
-                    m_ble_gamepad.setAxes(mapped);
-                    m_ble_gamepad.sendReport();
-                }
+                previous_value = mapped;
+                m_ble_gamepad.setAxes(mapped);
+                m_ble_gamepad.sendReport();
+
+                Serial.printf("Pot raw(avg): %d  → mapped: %d  (%dmV)\n",
+                              raw, mapped, analogReadMilliVolts(m_pin));
             }
 
             vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(pot::SAMPLING_PERIOD_MS));
